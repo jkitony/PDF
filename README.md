@@ -7,3 +7,12 @@ sudo mount -t drvfs F: /mnt/f
 
 aws s3 ls s3://salk-tm-dev/Sbic/ --recursive --human-readable --summarize > s3_size_summary.txt
 
+#duplicates
+#List all file paths
+aws s3 ls s3://salk-tm-dev/Sbic/ --recursive --output text | awk '{print $4}' > all_files.txt
+# Extract just the file names (not paths)
+awk -F/ '{print $NF}' all_files.txt > file_names_only.txt
+
+# Find duplicate file names
+sort file_names_only.txt | uniq -d > duplicated_names.txt
+
