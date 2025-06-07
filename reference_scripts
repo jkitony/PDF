@@ -1,0 +1,9 @@
+################
+#screen 
+##############
+screen -S pankmersbic50
+screen -ls
+screen -r
+screen -X -S 1740766.edta_nature quit
+Ctrl + A, then Ctrl + D
+screen -X -S session_id quit
