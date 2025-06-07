@@ -16,3 +16,12 @@ awk -F/ '{print $NF}' all_files.txt > file_names_only.txt
 # Find duplicate file names
 sort file_names_only.txt | uniq -d > duplicated_names.txt
 
+################
+#screen 
+##############
+screen -S pankmersbic50
+screen -ls
+screen -r
+screen -X -S 1740766.edta_nature quit
+Ctrl + A, then Ctrl + D
+screen -X -S session_id quit
