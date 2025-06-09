@@ -1,3 +1,7 @@
+du -h --max-depth=2 /data1/jkitony/
+aws s3 ls s3://salk-tm-dev/Sbic/pangenome_2024/assemblies/ --recursive --human-readable --summarize
+
+
 # PDF
 
 pdftk Kitony_resume2025_Martin_LutherKing_COVER.pdf Kitony_resume2025_Martin_LutherKing.pdf PhD.pdf MSC.pdf cat output KITONY_MLK_10G-3.pdf
