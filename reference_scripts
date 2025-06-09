@@ -1,5 +1,7 @@
 du -h --max-depth=2 /data1/jkitony/
 aws s3 ls s3://salk-tm-dev/Sbic/pangenome_2024/assemblies/ --recursive --human-readable --summarize
+tar -czvf Sbic50_svim_vcf.tar.gz -C /data1/jkitony/Sorghum/graph_pangenome2025/fiftygenomes/TenChrFastaCleaned/temp/svim_cutesv_results Sbic50_svim_vcf
+
 
 
 # PDF
