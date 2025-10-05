@@ -1,3 +1,21 @@
+
+mamba create -n compress_env pigz -y
+mamba activate compress_env
+
+
+(compress_env) jkitony@jkitony:/mnt/c/Sorghum$
+#compress
+tar -I pigz -cf 2024.tar.gz 2024
+tar -tf 2024.tar.gz | head
+
+# Extract
+tar -I pigz -xf 2024.tar.gz
+
+#move
+sudo mount -t drvfs D: /mnt/d
+mv 2024.tar.gz /mnt/d/
+
+
 du -h --max-depth=2 /data1/jkitony/
 aws s3 ls s3://salk-tm-dev/Sbic/pangenome_2024/assemblies/ --recursive --human-readable --summarize
 tar -czvf Sbic50_svim_vcf.tar.gz -C /data1/jkitony/Sorghum/graph_pangenome2025/fiftygenomes/TenChrFastaCleaned/temp/svim_cutesv_results Sbic50_svim_vcf_dir
