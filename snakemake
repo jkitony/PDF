@@ -1,0 +1,37 @@
+conda remove -n snake --all
+
+mamba create -n snake -c conda-forge -c bioconda snakemake==7.25.0 pip python=3.8 git parallel
+conda activate snake
+pip install awscli
+#####
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+boto3 1.35.72 requires botocore<1.36.0,>=1.35.72, but you have botocore 1.37.38 which is incompatible.
+boto3 1.35.72 requires s3transfer<0.11.0,>=0.10.0, but you have s3transfer 0.11.5 which is incompatible.
+####
+
+pip install setuptools-scm
+pip install tibanna==5.5.0
+###
+
+ERROR: pip's dependency resolver does not currently take into account all the packages that are installed. This behaviour is the source of the following dependency conflicts.
+awscli 1.38.38 requires botocore==1.37.38, but you have botocore 1.35.99 which is incompatible.
+awscli 1.38.38 requires s3transfer<0.12.0,>=0.11.0, but you have s3transfer 0.10.4 which is incompatible.
+
+####
+pip install mysql-connector-python-rf
+pip install lxml
+
+nano ~/.bashrc
+#edit
+export TIBANNA_DEFAULT_STEP_FUNCTION_NAME=tibanna_unicorn_salk-tm-15
+
+
+which aws && aws --version
+/data1/jkitony/miniconda3/envs/snake/bin/aws
+aws-cli/1.38.38 Python/3.8.20 Linux/5.4.0-204-generic botocore/1.35.99
+which python && python -V
+/data1/jkitony/miniconda3/envs/snake/bin/python
+Python 3.8.20
+which pip && pip -V
+/data1/jkitony/miniconda3/envs/snake/bin/pip
+pip 24.3.1 from /data1/jkitony/miniconda3/envs/snake/lib/python3.8/site-packages/pip (python 3.8)
