@@ -1,0 +1,267 @@
+#(kmc3) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/GWAS_HPI/Genotyping/fastq ]$
+#python make_dummy_reads.py --reads-per-sample 50000 --outdir dummy_reads --seed 42
+
+#!/usr/bin/env python3
+import argparse, gzip, os, random, sys
+from typing import Dict, List, Tuple
+
+# --------------------
+# Mapping of samples -> desired output FASTQ filename(s)
+#   - Paired-end: two filenames [R1, R2]
+#   - Single-end: one filename [R]
+# The contents will be sampled from dummy_R1_genome.fastq.gz (and R2 for paired)
+# --------------------
+SAMPLE_OUTPUTS: Dict[str, List[str]] = {
+    "PI565121_pub": ["ISGP-4_R1_genome.fastq.gz", "ISGP-4_R2_genome.fastq.gz"],
+    "PI656015_pub": ["ISGR-4_R1_genome.fastq.gz", "ISGR-4_R2_genome.fastq.gz"],
+    "PI154844_pub": ["ISLC-3_R1_genome.fastq.gz", "ISLC-3_R2_genome.fastq.gz"],
+    "PI655981_pub": ["ISMB-3_R1_genome.fastq.gz", "ISMB-3_R2_genome.fastq.gz"],
+    "PI660563_pub": ["L001_lane1-IXYG-01641_R1_genome.fastq.gz", "L001_lane1-IXYG-01641_R2_genome.fastq.gz"],
+    "PI513676_pub": ["L001_lane1-IYYN-01641_R1_genome.fastq.gz", "L001_lane1-IYYN-01641_R2_genome.fastq.gz"],
+    "PI534133_pub": ["L001_lane1-IZGS-01641_R1_genome.fastq.gz", "L001_lane1-IZGS-01641_R2_genome.fastq.gz"],
+    "PI276816_pub": ["L001_lane1-IZPX-01641_R1_genome.fastq.gz", "L001_lane1-IZPX-01641_R2_genome.fastq.gz"],
+    "PI656023_pub": ["L001_lane1-IZPY-01641_R1_genome.fastq.gz", "L001_lane1-IZPY-01641_R2_genome.fastq.gz"],
+    "PI533766_pub": ["L001_lane1-IZPZ-01641_R1_genome.fastq.gz", "L001_lane1-IZPZ-01641_R2_genome.fastq.gz"],
+    "PI156178_pub": ["L0011_lane11-IFGA-00125_R1_genome.fastq.gz", "L0011_lane11-IFGA-00125_R2_genome.fastq.gz"],
+    "PI276837_pub": ["L0011_lane11-INLJ-01284_R1_genome.fastq.gz", "L0011_lane11-INLJ-01284_R2_genome.fastq.gz"],
+    "PI329301_pub": ["L0013_lane13-IFJF-00151_R1_genome.fastq.gz", "L0013_lane13-IFJF-00151_R2_genome.fastq.gz"],
+    "PI154987_pub": ["L0015_lane15-IFMN-00153_R1_genome.fastq.gz", "L0015_lane15-IFMN-00153_R2_genome.fastq.gz"],
+    "PI180348_pub": ["L0016_lane16-INKU-01289_R1_genome.fastq.gz", "L0016_lane16-INKU-01289_R2_genome.fastq.gz"],
+    "PI585966_pub": ["L0017_lane17-IFLG-00155_R1_genome.fastq.gz", "L0017_lane17-IFLG-00155_R2_genome.fastq.gz"],
+    "PI655988_pub": ["L0018_lane18-IFHC-00132_R1_genome.fastq.gz", "L0018_lane18-IFHC-00132_R2_genome.fastq.gz"],
+    "PI569459_pub": ["L002_lane2-IFFX-00116_R1_genome.fastq.gz", "L002_lane2-IFFX-00116_R2_genome.fastq.gz"],
+    "PI564163_pub": ["L002_lane2-IWNU-01579_R1_genome.fastq.gz", "L002_lane2-IWNU-01579_R2_genome.fastq.gz"],
+    "PI533869_pub": ["L002_lane2-IWNY-01579_R1_genome.fastq.gz", "L002_lane2-IWNY-01579_R2_genome.fastq.gz"],
+    "PI570071_pub": ["L0020_lane20-IFKH-00158_R1_genome.fastq.gz", "L0020_lane20-IFKH-00158_R2_genome.fastq.gz"],
+    "PI656044_pub": ["L0024_lane24-IFMA-00162_R1_genome.fastq.gz", "L0024_lane24-IFMA-00162_R2_genome.fastq.gz"],
+    "PI660565_pub": ["L003_lane3-IXYE-01624_R1_genome.fastq.gz", "L003_lane3-IXYE-01624_R2_genome.fastq.gz"],
+    "PI656031_pub": ["L004_lane4-ITIK-01533_R1_genome.fastq.gz", "L004_lane4-ITIK-01533_R2_genome.fastq.gz"],
+    "PI656050_pub": ["ITIL-01543_R1_genome.fastq.gz", "ITIL-01543_R2_genome.fastq.gz"],
+    "PI656057_pub": ["L004_lane4-IUAX-01543_R1_genome.fastq.gz", "L004_lane4-IUAX-01543_R2_genome.fastq.gz"],
+    "PI597980_pub": ["L004_lane4-IUIN-01558_R1_genome.fastq.gz", "L004_lane4-IUIN-01558_R2_genome.fastq.gz"],
+    "PI660557_pub": ["L004_lane4-IUIW-01558_R1_genome.fastq.gz", "L004_lane4-IUIW-01558_R2_genome.fastq.gz"],
+    "PI656027_pub": ["L004_lane4-IWCK-01572_R1_genome.fastq.gz", "L004_lane4-IWCK-01572_R2_genome.fastq.gz"],
+    "PI576434_pub": ["L004_lane4-IWCL-01572_R1_genome.fastq.gz", "L004_lane4-IWCL-01572_R2_genome.fastq.gz"],
+    "PI329501_pub": ["L004_lane4-IXCU-01590_R1_genome.fastq.gz", "L004_lane4-IXCU-01590_R2_genome.fastq.gz"],
+    "PI656111_pub": ["L004_lane4-IXYF-01625_R1_genome.fastq.gz", "L004_lane4-IXYF-01625_R2_genome.fastq.gz"],
+    "PI543243_exp": ["SbicPI543243_PH256.ill_WGS_Ilumina.R000-278.L001-121.R1.fastq.gz",
+                     "SbicPI543243_PH256.ill_WGS_Ilumina.R000-278.L001-121.R2.fastq.gz"],
+    "PI543246_exp": ["SbicPI543246_PHB279.ill_WGS.R000-161.L000-767.R1.fastq.gz",
+                     "SbicPI543246_PHB279.ill_WGS.R000-161.L000-767.R2.fastq.gz"],
+    "PI543247_exp": ["SbicPI543247_PHB349.ill_WGS_Ilumina.R000-278.L001-120.R1.fastq.gz",
+                     "SbicPI543247_PHB349.ill_WGS_Ilumina.R000-278.L001-120.R2.fastq.gz"],
+    "PI544069_exp": ["SbicPI544069_PH352.ill_WGS_Ilumina.R000-278.L001-126.R1.fastq.gz",
+                     "SbicPI544069_PH352.ill_WGS_Ilumina.R000-278.L001-126.R2.fastq.gz"],
+    "PI554647_exp": ["SbicPI554647_PH355.ill_WGS_Ilumina.R000-278.L001-112.R1.fastq.gz",
+                     "SbicPI554647_PH355.ill_WGS_Ilumina.R000-278.L001-112.R2.fastq.gz"],
+    "PI554648_exp": ["SbicPI554648_PH356.ill_WGS_Ilumina.R000-278.L001-129.R1.fastq.gz",
+                     "SbicPI554648_PH356.ill_WGS_Ilumina.R000-278.L001-129.R2.fastq.gz"],
+    "PI554649_exp": ["SbicPI554649_PH410.ill_WGS_Ilumina.R000-278.L001-106.R1.fastq.gz",
+                     "SbicPI554649_PH410.ill_WGS_Ilumina.R000-278.L001-106.R2.fastq.gz"],
+    "PI554650_exp": ["SbicPI554650_PH449.ill_WGS_Ilumina.R000-278.L001-132.R1.fastq.gz",
+                     "SbicPI554650_PH449.ill_WGS_Ilumina.R000-278.L001-132.R2.fastq.gz"],
+    "PI554652_exp": ["SbicPI554652_PHB429.ill_WGS_Ilumina.R000-278.L001-125.R1.fastq.gz",
+                     "SbicPI554652_PHB429.ill_WGS_Ilumina.R000-278.L001-125.R2.fastq.gz"],
+    "PI554654_exp": ["SbicPI554654_PHB432.ill_WGS.R000-161.L000-764.R1.fastq.gz",
+                     "SbicPI554654_PHB432.ill_WGS.R000-161.L000-764.R2.fastq.gz"],
+    "PI555457_exp": ["SbicPI555457_PHB331.ill_WGS_Ilumina.R000-278.L001-105.R1.fastq.gz",
+                     "SbicPI555457_PHB331.ill_WGS_Ilumina.R000-278.L001-105.R2.fastq.gz"],
+    "PI561926_exp": ["SbicPI561926_R160.ill_WGS_Ilumina.R000-278.L001-108.R1.fastq.gz",
+                     "SbicPI561926_R160.ill_WGS_Ilumina.R000-278.L001-108.R2.fastq.gz"],
+    "PI562621_exp": ["SbicPI562621_PH538.ill_WGS_Ilumina.R000-278.L001-109.R1.fastq.gz",
+                     "SbicPI562621_PH538.ill_WGS_Ilumina.R000-278.L001-109.R2.fastq.gz"],
+    "PI562622_exp": ["PI562622.R1.fastq.gz", "PI562622.R2.fastq.gz"],
+    "PI562623_exp": ["SbicPI562623_PHB118.ill_WGS.R000-161.L000-766.R1.fastq.gz",
+                     "SbicPI562623_PHB118.ill_WGS.R000-161.L000-766.R2.fastq.gz"],
+    "PI562624_exp": ["SbicPI562624_PHA118.ill_WGS_Ilumina.R000-278.L001-113.R1.fastq.gz",
+                     "SbicPI562624_PHA118.ill_WGS_Ilumina.R000-278.L001-113.R2.fastq.gz"],
+    "PI562625_exp": ["SbicPI562625_PHA122.ill_WGS_Ilumina.R000-278.L001-123.R1.fastq.gz",
+                     "SbicPI562625_PHA122.ill_WGS_Ilumina.R000-278.L001-123.R2.fastq.gz"],
+    "PI564085_exp": ["SbicPI564085_WKMIII.ill_WGS_Ilumina.R000-278.L001-128.R1.fastq.gz",
+                     "SbicPI564085_WKMIII.ill_WGS_Ilumina.R000-278.L001-128.R2.fastq.gz"],
+    "PI574398_exp": ["SbicPI574398_PHA651.ill_WGS_Ilumina.R000-278.L001-127.R1.fastq.gz",
+                     "SbicPI574398_PHA651.ill_WGS_Ilumina.R000-278.L001-127.R2.fastq.gz"],
+    "PI574406_exp": ["SbicPI574406_PHA151.ill_WGS.R000-161.L000-763.R1.fastq.gz",
+                     "SbicPI574406_PHA151.ill_WGS.R000-161.L000-763.R2.fastq.gz"],
+    "PI574407_exp": ["SbicPI574407_PHB151.ill_WGS_Ilumina.R000-278.L001-122.R1.fastq.gz",
+                     "SbicPI574407_PHB151.ill_WGS_Ilumina.R000-278.L001-122.R2.fastq.gz"],
+    "PI594354_exp": ["SbicPI594354_PHWIABQE.ill_WGS_Ilumina.R000-278.L001-107.R1.fastq.gz",
+                     "SbicPI594354_PHWIABQE.ill_WGS_Ilumina.R000-278.L001-107.R2.fastq.gz"],
+    "PI594355_exp": ["SbicPI594355_PHB1CGQF.ill_WGS_Ilumina.R000-278.L001-110.R1.fastq.gz",
+                     "SbicPI594355_PHB1CGQF.ill_WGS_Ilumina.R000-278.L001-110.R2.fastq.gz"],
+    "PI595221_exp": ["SbicPI595221_EXCELS235.ill_WGS_Ilumina.R000-278.L001-124.R1.fastq.gz",
+                     "SbicPI595221_EXCELS235.ill_WGS_Ilumina.R000-278.L001-124.R2.fastq.gz"],
+    "PI596332_exp": ["SbicPI596332_PH387LM.ill_WGS_Ilumina.R000-278.L001-116.R1.fastq.gz",
+                     "SbicPI596332_PH387LM.ill_WGS_Ilumina.R000-278.L001-116.R2.fastq.gz"],
+    "PI596567_exp": ["SbicPI596567_PH4KNYE.ill_WGS.R000-161.L000-765.R1.fastq.gz",
+                     "SbicPI596567_PH4KNYE.ill_WGS.R000-161.L000-765.R2.fastq.gz"],
+    "PI601264_exp": ["SbicPI601264_PH227.ill_WGS_Ilumina.R000-278.L001-118.R1.fastq.gz",
+                     "SbicPI601264_PH227.ill_WGS_Ilumina.R000-278.L001-118.R2.fastq.gz"],
+    "PI601415_exp": ["SbicPI601415_PH232.ill_WGS_Ilumina.R000-278.L001-119.R1.fastq.gz",
+                     "SbicPI601415_PH232.ill_WGS_Ilumina.R000-278.L001-119.R2.fastq.gz"],
+    "PI601552_exp": ["SbicPI601552_A8087C.ill_WGS_Ilumina.R000-278.L001-114.R1.fastq.gz",
+                     "SbicPI601552_A8087C.ill_WGS_Ilumina.R000-278.L001-114.R2.fastq.gz"],
+    "PI601553_exp": ["SbicPI601553_PH257.ill_WGS.R000-161.L000-754.R1.fastq.gz",
+                     "SbicPI601553_PH257.ill_WGS.R000-161.L000-754.R2.fastq.gz"],
+    "PI601554_exp": ["SbicPI601554_PH289.ill_WGS.R000-161.L000-753.R1.fastq.gz",
+                     "SbicPI601554_PH289.ill_WGS.R000-161.L000-753.R2.fastq.gz"],
+    "PI601555_exp": ["SbicPI601555_PH308.ill_WGS.R000-161.L000-756.R1.fastq.gz",
+                     "SbicPI601555_PH308.ill_WGS.R000-161.L000-756.R2.fastq.gz"],
+    "PI601556_exp": ["SbicPI601556_PH309.ill_WGS.R000-161.L000-761.R1.fastq.gz",
+                     "SbicPI601556_PH309.ill_WGS.R000-161.L000-761.R2.fastq.gz"],
+    "PI601557_exp": ["SbicPI601557_PH310.ill_WGS_Ilumina.R000-278.L001-115.R1.fastq.gz",
+                     "SbicPI601557_PH310.ill_WGS_Ilumina.R000-278.L001-115.R2.fastq.gz"],
+    "PI601716_exp": ["SbicPI601716_PH328.ill_WGS.R000-161.L000-750.R1.fastq.gz",
+                     "SbicPI601716_PH328.ill_WGS.R000-161.L000-750.R2.fastq.gz"],
+    "PI601717_exp": ["SbicPI601717_PH333.ill_WGS.R000-161.L000-755.R1.fastq.gz",
+                     "SbicPI601717_PH333.ill_WGS.R000-161.L000-755.R2.fastq.gz"],
+    "PI601718_exp": ["SbicPI601718_PHA82.ill_WGS.R000-161.L000-760.R1.fastq.gz",
+                     "SbicPI601718_PHA82.ill_WGS.R000-161.L000-760.R2.fastq.gz"],
+    "PI601719_exp": ["SbicPI601719_PHA86.ill_WGS_Ilumina.R000-278.L001-111.R1.fastq.gz",
+                     "SbicPI601719_PHA86.ill_WGS_Ilumina.R000-278.L001-111.R2.fastq.gz"],
+    "PI601720_exp": ["SbicPI601720_PHB82.ill_WGS.R000-161.L000-759.R1.fastq.gz",
+                     "SbicPI601720_PHB82.ill_WGS.R000-161.L000-759.R2.fastq.gz"],
+    "PI601721_exp": ["SbicPI601721_PHB86.ill_WGS.R000-161.L000-752.R1.fastq.gz",
+                     "SbicPI601721_PHB86.ill_WGS.R000-161.L000-752.R2.fastq.gz"],
+    "PI601743_exp": ["SbicPI601743_HP150.ill_WGS.R000-161.L000-751.R1.fastq.gz",
+                     "SbicPI601743_HP150.ill_WGS.R000-161.L000-751.R2.fastq.gz"],
+    "PI601744_exp": ["SbicPI601744_R159.ill_WGS.R000-161.L000-758.R1.fastq.gz",
+                     "SbicPI601744_R159.ill_WGS.R000-161.L000-758.R2.fastq.gz"],
+    "PI601756_exp": ["SbicPI601756_R145.ill_WGS.R000-161.L000-762.R1.fastq.gz",
+                     "SbicPI601756_R145.ill_WGS.R000-161.L000-762.R2.fastq.gz"],
+    "PI602599_exp": ["SbicPI602599_PHBCWNL.ill_WGS_Ilumina.R000-278.L001-117.R1.fastq.gz",
+                     "SbicPI602599_PHBCWNL.ill_WGS_Ilumina.R000-278.L001-117.R2.fastq.gz"],
+    "PI602600_exp": ["SbicPI602600_PHBEPOYJ.ill_WGS.R000-161.L000-757.R1.fastq.gz",
+                     "SbicPI602600_PHBEPOYJ.ill_WGS.R000-161.L000-757.R2.fastq.gz"],
+    # Single-end (HiFi, ONT) examples below: will be sampled from R1 source only
+    "PI554646_exp": ["SbicPI554646_PH288.ont_pass_WGS.R000-244.L000-874.fastq.gz"],
+    "PI173315_wild": ["Sbic_PI173315.pb_HiFi.R000-783.L005-359.hifi.fastq.gz"],
+    "PI282828_wild": ["Sbic_PI282828.pb_HiFi.R000-783.L005-361.hifi.fastq.gz"],
+    "PI240996_wild": ["Sbic_PI240996.pb_HiFi.R000-783.L005-360.hifi.fastq.gz"],
+    "PI220931_wild": ["Sbic_PI220931.pb_HiFi.R000-786.L005-389.hifi.fastq.gz"],
+    "PI266923_wild": ["Sbic_PI266923.pb_HiFi.R000-786.L005-362.hifi.fastq.gz"],
+    "PI156549_wild": ["Sbic_PI156549.pb_HiFi.R000-786.L005-388.hifi.fastq.gz"],
+    "PI208190_wild": ["Sbic_PI208190.pb_HiFi.R000-786.L005-387.hifi.fastq.gz"],
+    "PI250104_wild": ["Sbic_PI250104.pb_HiFi.R000-786.L005-390.hifi.fastq.gz"],
+    "PI260273_wild": ["Sbic_PI260273.pb_HiFi.R000-787.L005-392.hifi.fastq.gz"],
+    "PI266964_wild": ["Sbic_PI266964.pb_HiFi.R000-787.L005-393.hifi.fastq.gz"],
+    "PI267656_wild": ["Sbic_PI267656.pb_HiFi.R000-787.L005-391.hifi.fastq.gz"],
+    "PI267331_wild": ["Sbic_PI267331.pb_HiFi.R000-797.L005-509.hifi.fastq.gz"],
+    "PI196890_wild": ["Sbic_PI196890.pb_HiFi.R000-798.L005-504.hifi.fastq.gz"],
+    "PI198999_wild": ["Sbic_PI198999.pb_HiFi.R000-797.L005-508.hifi.fastq.gz"],
+    "PI226009_wild": ["Sbic_PI226009.pb_HiFi.R000-788.L005-430.hifi.fastq.gz"],
+    "PI246654_wild": ["Sbic_PI246654.pb_HiFi.R000-797.L005-505.hifi.fastq.gz"],
+    "PI207839_wild": ["Sbic_PI207839.pb_HiFi.R000-798.L005-507.hifi.fastq.gz"],
+    "PI201766_wild": ["Sbic_PI201766.pb_HiFi.R000-789.L005-432.hifi.fastq.gz"],
+    "PI260056_wild": ["Sbic_PI260056.pb_HiFi.R000-788.L005-429.hifi.fastq.gz"],
+    "PI225006_wild": ["Sbic_PI225006.pb_HiFi.R000-797.L005-510.hifi.fastq.gz"],
+    "PI208702_wild": ["Sbic_PI208702.pb_HiFi.R000-798.L005-506.hifi.fastq.gz"],
+    "PI190579_wild": ["Sbic_PI190579.pb_HiFi.R000-797.L005-503.hifi.fastq.gz"],
+    "PI204282_wild": ["Sbic_PI204282.pb_HiFi.R000-789.L005-433.hifi.fastq.gz"],
+    "PI202410_wild": ["Sbic_PI202410.pb_HiFi.R000-788.L005-427.hifi.fastq.gz"],
+    "PI262561_wild": ["Sbic_PI262561.pb_HiFi.R000-789.L005-431.hifi.fastq.gz"],
+}
+
+def count_fastq_reads(gz_path: str) -> int:
+    """Count reads (records) in a gzipped FASTQ (4 lines per record)."""
+    n_lines = 0
+    with gzip.open(gz_path, "rt") as fh:
+        for _ in fh:
+            n_lines += 1
+    if n_lines % 4 != 0:
+        print(f"[WARN] {gz_path} lines not multiple of 4 ({n_lines}); trailing lines will be ignored.", file=sys.stderr)
+    return n_lines // 4
+
+def sample_indices(total: int, k: int, rng: random.Random) -> List[int]:
+    """Return sorted unique indices in [0..total-1] to extract."""
+    k = min(k, total)
+    idxs = rng.sample(range(total), k)
+    idxs.sort()
+    return idxs
+
+def write_records_by_index(in_path: str, out_path: str, wanted: set) -> int:
+    """Write selected FASTQ records from in_path (gz) to out_path (gz) by 0-based record index."""
+    wrote = 0
+    with gzip.open(in_path, "rt") as fin, gzip.open(out_path, "wt") as fout:
+        rec_idx = 0
+        while True:
+            # Read one FASTQ record (4 lines)
+            lines = [fin.readline() for _ in range(4)]
+            if not lines[0]:
+                break  # EOF
+            if rec_idx in wanted:
+                for line in lines:
+                    if line:
+                        fout.write(line)
+                wrote += 1
+            rec_idx += 1
+    return wrote
+
+def paired_write_records_by_index(in_r1: str, in_r2: str, out_r1: str, out_r2: str, wanted: set) -> Tuple[int, int]:
+    """Write paired records at the same indices from R1 and R2."""
+    w1 = write_records_by_index(in_r1, out_r1, wanted)
+    w2 = write_records_by_index(in_r2, out_r2, wanted)
+    return w1, w2
+
+def main():
+    ap = argparse.ArgumentParser(description="Create ~N-read dummy FASTQs for many samples by sampling from dummy_R1/R2.")
+    ap.add_argument("--r1", default="dummy_R1_genome.fastq.gz", help="Source R1 FASTQ.gz")
+    ap.add_argument("--r2", default="dummy_R2_genome.fastq.gz", help="Source R2 FASTQ.gz (required for paired outputs)")
+    ap.add_argument("--reads-per-sample", type=int, default=50000, help="Target reads per sample")
+    ap.add_argument("--outdir", default="dummy_reads", help="Output directory")
+    ap.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    args = ap.parse_args()
+
+    rng = random.Random(args.seed)
+    os.makedirs(args.outdir, exist_ok=True)
+
+    if not os.path.isfile(args.r1):
+        sys.exit(f"[ERROR] Missing source R1: {args.r1}")
+    if not os.path.isfile(args.r2):
+        print(f"[WARN] Missing source R2: {args.r2} (single-end outputs will still be created from R1).", file=sys.stderr)
+
+    # Count records in R1 (and R2 if present) to ensure we don't oversample
+    total_r1 = count_fastq_reads(args.r1)
+    print(f"[INFO] {args.r1}: {total_r1} reads")
+
+    total_r2 = None
+    if os.path.isfile(args.r2):
+        total_r2 = count_fastq_reads(args.r2)
+        print(f"[INFO] {args.r2}: {total_r2} reads")
+        if total_r2 != total_r1:
+            print(f"[WARN] R1 and R2 have different read counts; paired sampling will use min={min(total_r1, total_r2)}.", file=sys.stderr)
+
+    # Precompute a single set of indices to reuse across all samples (keeps size and randomness consistent)
+    usable_total = total_r1 if total_r2 is None else min(total_r1, total_r2)
+    want = sample_indices(usable_total, args.reads_per_sample, rng)
+    want_set = set(want)
+    print(f"[INFO] Sampling {len(want_set)} reads per sample from 0..{usable_total-1}")
+
+    # Generate outputs
+    for sample, files in SAMPLE_OUTPUTS.items():
+        if len(files) == 2 and total_r2 is not None:
+            out_r1 = os.path.join(args.outdir, files[0])
+            out_r2 = os.path.join(args.outdir, files[1])
+            os.makedirs(os.path.dirname(out_r1) or args.outdir, exist_ok=True)
+            os.makedirs(os.path.dirname(out_r2) or args.outdir, exist_ok=True)
+            w1, w2 = paired_write_records_by_index(args.r1, args.r2, out_r1, out_r2, want_set)
+            print(f"[OK] {sample}: wrote {w1} reads to {out_r1} and {w2} reads to {out_r2}")
+        elif len(files) == 2 and total_r2 is None:
+            # Fall back: create only R1 file for paired request if R2 source is missing
+            out_r1 = os.path.join(args.outdir, files[0])
+            os.makedirs(os.path.dirname(out_r1) or args.outdir, exist_ok=True)
+            w = write_records_by_index(args.r1, out_r1, want_set)
+            print(f"[OK] {sample}: (fallback single) wrote {w} reads to {out_r1} (R2 skipped; missing source R2)")
+        elif len(files) == 1:
+            # Single-end output from R1 source
+            out_r = os.path.join(args.outdir, files[0])
+            os.makedirs(os.path.dirname(out_r) or args.outdir, exist_ok=True)
+            w = write_records_by_index(args.r1, out_r, want_set)
+            print(f"[OK] {sample}: wrote {w} reads to {out_r}")
+        else:
+            print(f"[WARN] {sample}: unexpected filename list (len={len(files)}); skipping.", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()
+
+  
