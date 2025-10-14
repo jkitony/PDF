@@ -1,3 +1,262 @@
+# kGWAS / GAPIT results viewer with column auto-mapping + downloads
+# Accepts:
+#  - Minimal: SNP, CHR, POS, P
+#  - GAPIT default: SNP, Chr, Pos, P.value, MAF, nobs, H&B.P.Value, Effect
+
+library(shiny)
+library(DT)
+library(ggplot2)
+library(tools)
+
+# --- helpers -------------------------------------------------------------
+options(shiny.maxRequestSize = 200 * 1024^2)   # 200 MB; change as needed
+standardize_cols <- function(df){
+  # Make names upper + strip punctuation
+  nm_raw <- names(df)
+  nm <- toupper(gsub("[^A-Za-z0-9]+", "", nm_raw))
+  names(df) <- nm
+
+  # Map common variants -> canonical
+  # Canonical: SNP, CHR, POS, P, MAF, NOBS, EFFECT, HB_P (H&B.P.Value)
+  alias <- list(
+    SNP   = c("SNP","MARKER","ID","VARIANT"),
+    CHR   = c("CHR","CHROM","CHROMOSOME"),
+    POS   = c("POS","BP","POSITION"),
+    P     = c("P","PVALUE","PVALUE","PVAL","PVALUEADJ","PVALUEUNADJ","PVALUE_BONF","PVALUE_FDR","PVALUE1","PVALUE2","PVALUE3","PVALUE4","PVALUE5","PVALUE6","P0","P1","P2","P3"),
+    MAF   = c("MAF","FREQ","ALLELEFREQ"),
+    NOBS  = c("NOBS","N","NSAMPLES","SAMPLES"),
+    EFFECT= c("EFFECT","BETA","ESTIMATE","COEF"),
+    HB_P  = c("HBPVALUE","HBP") # "H&B.P.Value" -> stripped becomes HBPVALUE
+  )
+
+  add_if_missing <- function(x, colname){ if(!(colname %in% names(x))) x[[colname]] <- NA; x }
+
+  # Find first present alias and rename to canonical
+  for (canon in names(alias)) {
+    hits <- intersect(alias[[canon]], names(df))
+    if (length(hits) >= 1) {
+      names(df)[match(hits[1], names(df))] <- canon
+    } else {
+      df <- add_if_missing(df, canon)
+    }
+  }
+
+  # Coerce basic types
+  numify <- function(v) suppressWarnings(as.numeric(v))
+  if ("CHR" %in% names(df)) df$CHR <- as.character(df$CHR)
+  if ("POS" %in% names(df)) df$POS <- numify(df$POS)
+  if ("P"   %in% names(df)) df$P   <- pmax(pmin(numify(df$P), 1), .Machine$double.eps)
+  if ("MAF" %in% names(df)) df$MAF <- numify(df$MAF)
+  if ("NOBS"%in% names(df)) df$NOBS<- numify(df$NOBS)
+  if ("EFFECT"%in% names(df)) df$EFFECT<- numify(df$EFFECT)
+  if ("HB_P"%in% names(df)) df$HB_P<- numify(df$HB_P)
+
+  # Ensure required
+  req_cols <- c("CHR","POS","P")
+  ok <- all(req_cols %in% names(df))
+  attr(df, "ok") <- ok
+  df
+}
+
+make_manhattan <- function(d, pCut){
+  # cumulative position per chromosome
+  d$CHR <- as.factor(d$CHR)
+  chr_sizes <- aggregate(POS ~ CHR, d, max, na.rm = TRUE)
+  chr_sizes$cumstart <- c(0, cumsum(head(chr_sizes$POS, -1)))
+  d <- merge(d, chr_sizes[,c("CHR","cumstart")], by="CHR", all.x=TRUE, sort=FALSE)
+  d$BPcum <- d$POS + d$cumstart
+
+  ax <- aggregate(BPcum ~ CHR, d, function(z) mean(range(z, na.rm=TRUE)))
+  ggplot(d, aes(BPcum, -log10(P), group = CHR)) +
+    geom_point(alpha = 0.6, size = 0.7) +
+    geom_hline(yintercept = -log10(pCut), linetype = 2) +
+    scale_x_continuous(breaks = ax$BPcum, labels = levels(d$CHR)) +
+    labs(x = "Chromosome", y = "-log10(p)") +
+    theme_bw(base_size = 12) +
+    theme(panel.grid.major.x = element_blank(),
+          panel.grid.minor.x = element_blank())
+}
+
+make_qq <- function(p){
+  p <- sort(pmax(pmin(p, 1), .Machine$double.eps))
+  n <- length(p)
+  exp <- -log10((1:n)/(n+1))
+  obs <- -log10(p)
+  ggplot(data.frame(exp, obs), aes(exp, obs)) +
+    geom_abline(slope = 1, intercept = 0, linetype = 2) +
+    geom_point(alpha = 0.6, size = 1) +
+    labs(x = "Expected -log10(p)", y = "Observed -log10(p)") +
+    theme_bw(base_size = 12)
+}
+
+
+
+# --- ui ------------------------------------------------------------------
+
+ui <- fluidPage(
+  titlePanel("GAPIT / kGWAS Results Viewer"),
+  sidebarLayout(
+    sidebarPanel(
+      fileInput("gwas", "Upload GWAS results (CSV/TSV/TXT)", accept = c(".csv",".tsv",".txt")),
+      radioButtons("sep", "Separator", choices = c("Auto","Comma"=",","Tab"="\t","Space"=" "), inline = TRUE, selected = "Auto"),
+      numericInput("pCut", "p-value cutoff", value = 1e-5, min = 1e-308, step = 1e-6),
+      numericInput("mafMin","MAF ≥ (if present)", value = 0.0, min = 0, max = 0.5, step = 0.005),
+      uiOutput("chrPicker"),
+      hr(),
+      h5("Downloads"),
+      radioButtons("plotFmt", "Plot format", choices = c("PDF","PNG"), inline = TRUE),
+      downloadButton("dlManhattan", "Download Manhattan"),
+      downloadButton("dlQQ", "Download QQ"),
+      downloadButton("dlHits", "Download Top Hits (TSV)"),
+      width = 3
+    ),
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Manhattan", plotOutput("manhattan", height = 480)),
+        tabPanel("Top Hits", DTOutput("hits")),
+        tabPanel("QQ", plotOutput("qqplot", height = 420)),
+        tabPanel("Info", verbatimTextOutput("info"))
+      )
+    )
+  )
+)
+
+# --- server --------------------------------------------------------------
+
+server <- function(input, output, session){
+
+  df_raw <- reactive({
+    req(input$gwas)
+    ext <- tolower(file_ext(input$gwas$name))
+    sep <- switch(input$sep, "Auto" = NULL, "=" = ",", "\t" = "\t", " " = " ")
+    read_try <- function(){
+      if (is.null(sep)) {
+        # try csv then tsv
+        x <- try(read.csv(input$gwas$datapath, check.names = FALSE), silent = TRUE)
+        if (inherits(x, "try-error")) {
+          x <- read.delim(input$gwas$datapath, check.names = FALSE)
+        }
+        x
+      } else {
+        if (sep == ",") read.csv(input$gwas$datapath, check.names = FALSE)
+        else read.delim(input$gwas$datapath, sep = sep, check.names = FALSE)
+      }
+    }
+    x <- read_try()
+    x <- standardize_cols(x)
+    validate(need(isTRUE(attr(x,"ok")), "Required columns not found. Need CHR, POS, P (or GAPIT equivalents: Chr, Pos, P.value)."))
+    x
+  })
+
+  output$chrPicker <- renderUI({
+    d <- df_raw()
+    chrs <- sort(unique(as.character(d$CHR)))
+    selectizeInput("chrSel","Chromosomes", choices = chrs, selected = chrs, multiple = TRUE)
+  })
+
+  df_for_plot <- reactive({
+    d <- df_raw()
+    # Optional MAF filter for plotting
+    if ("MAF" %in% names(d) && !is.null(input$mafMin) && input$mafMin > 0)
+      d <- subset(d, is.na(MAF) | MAF >= input$mafMin)
+    if (!is.null(input$chrSel)) d <- subset(d, CHR %in% input$chrSel)
+    d <- subset(d, is.finite(P) & P > 0)
+    validate(need(nrow(d) > 0, "No rows after filtering (check MAF/Chr)."))
+    d
+  })
+
+  df_hits <- reactive({
+    d <- df_for_plot()
+    subset(d, P <= input$pCut)
+  })
+
+  output$manhattan <- renderPlot({
+    d <- df_for_plot()
+    make_manhattan(d, input$pCut)
+  })
+
+  output$qqplot <- renderPlot({
+    d <- df_for_plot()
+    make_qq(d$P)
+  })
+
+  output$hits <- renderDT({
+    d <- df_hits()
+    keep <- intersect(c("SNP","CHR","POS","P","MAF","NOBS","EFFECT","HB_P"), names(d))
+    datatable(d[order(d$P), keep, drop=FALSE],
+              options = list(pageLength = 10, scrollX = TRUE))
+  })
+
+  output$info <- renderText({
+    d <- df_raw()
+    cols <- paste(names(d), collapse = ", ")
+    paste0("Rows: ", nrow(d), "\nColumns: ", cols,
+           "\n\nMapped columns used: CHR, POS, P",
+           if ("MAF" %in% names(d)) ", MAF" else "",
+           if ("SNP" %in% names(d)) ", SNP" else "",
+           if ("NOBS" %in% names(d)) ", NOBS" else "",
+           if ("EFFECT" %in% names(d)) ", EFFECT" else "",
+           if ("HB_P" %in% names(d)) ", HB_P" else "")
+  })
+
+  # ---- downloads ----
+
+  output$dlManhattan <- downloadHandler(
+    filename = function(){
+      paste0("manhattan.", tolower(input$plotFmt))
+    },
+    content = function(file){
+      d <- df_for_plot()
+      p <- make_manhattan(d, input$pCut)
+      fmt <- tolower(input$plotFmt)
+      if (fmt == "pdf") {
+        pdf(file, width = 9, height = 5.5)
+        print(p)
+        dev.off()
+      } else {
+        png(file, width = 1200, height = 720, res = 150)
+        print(p)
+        dev.off()
+      }
+    }
+  )
+
+  output$dlQQ <- downloadHandler(
+    filename = function(){
+      paste0("qq.", tolower(input$plotFmt))
+    },
+    content = function(file){
+      d <- df_for_plot()
+      p <- make_qq(d$P)
+      fmt <- tolower(input$plotFmt)
+      if (fmt == "pdf") {
+        pdf(file, width = 6, height = 6)
+        print(p)
+        dev.off()
+      } else {
+        png(file, width = 900, height = 900, res = 150)
+        print(p)
+        dev.off()
+      }
+    }
+  )
+
+  output$dlHits <- downloadHandler(
+    filename = function(){ "top_hits.tsv" },
+    content = function(file){
+      d <- df_hits()
+      keep <- intersect(c("SNP","CHR","POS","P","MAF","NOBS","EFFECT","HB_P"), names(d))
+      write.table(d[order(d$P), keep, drop=FALSE], file, sep = "\t", row.names = FALSE, quote = FALSE)
+    }
+  )
+}
+
+shinyApp(ui, server)
+
+
+
+
+XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 # Minimal kGWAS Shiny viewer
 #(base) jkitony@jkitony:/mnt/c/Sorghum/2025/shiny$ R
 # Required: CHR (chr as numeric/character), POS (bp), P (p-value), optional: MAF, SNP/id
