@@ -1,0 +1,120 @@
+# Minimal kGWAS Shiny viewer
+#(base) jkitony@jkitony:/mnt/c/Sorghum/2025/shiny$ R
+# Required: CHR (chr as numeric/character), POS (bp), P (p-value), optional: MAF, SNP/id
+
+library(shiny)
+library(DT)
+library(ggplot2)
+
+ui <- fluidPage(
+  titlePanel("kGWAS Results Viewer"),
+  sidebarLayout(
+    sidebarPanel(
+      fileInput("gwas", "Upload GWAS results (CSV/TSV)", accept = c(".csv",".tsv",".txt")),
+      radioButtons("sep", "Separator", choices = c("Auto","Comma"=",","Tab"="\t","Space"=" "), inline = TRUE, selected = "Auto"),
+      numericInput("pCut", "p-value cutoff", value = 1e-5, min = 0, step = 1e-6),
+      numericInput("mafMin","MAF ≥", value = 0.01, min = 0, max = 0.5, step = 0.005),
+      uiOutput("chrPicker"),
+      width = 3
+    ),
+    mainPanel(
+      tabsetPanel(
+        tabPanel("Manhattan", plotOutput("manhattan", height = 450)),
+        tabPanel("Top Hits", DTOutput("hits")),
+        tabPanel("QQ", plotOutput("qqplot", height = 400))
+      )
+    )
+  )
+)
+
+server <- function(input, output, session){
+
+  df_raw <- reactive({
+    req(input$gwas)
+    # read with auto/semi-auto sep
+    sep <- switch(input$sep, "Auto" = NULL, "=" = ",", "\t" = "\t", " " = " ")
+    x <- tryCatch({
+      if (is.null(sep)) {
+        # try common seps
+        y <- try(read.csv(input$gwas$datapath), silent=TRUE)
+        if (inherits(y, "try-error")) y <- read.delim(input$gwas$datapath)
+        y
+      } else {
+        if (sep == ",") read.csv(input$gwas$datapath) else read.delim(input$gwas$datapath, sep = sep)
+      }
+    }, error=function(e) NULL)
+    validate(need(!is.null(x), "Could not read file. Check separator/format."))
+
+    nm <- toupper(names(x))
+    names(x) <- nm
+    need_cols <- c("CHR","POS","P")
+    validate(need(all(need_cols %in% nm), "Required columns missing: CHR, POS, P"))
+    # Coerce types
+    x$CHR <- as.character(x$CHR)
+    x$POS <- as.numeric(x$POS)
+    x$P   <- as.numeric(x$P)
+    if ("MAF" %in% nm) x$MAF <- as.numeric(x$MAF)
+    x
+  })
+
+  output$chrPicker <- renderUI({
+    d <- df_raw(); chrs <- sort(unique(as.character(d$CHR)))
+    selectizeInput("chrSel","Chromosomes", choices = chrs, selected = chrs, multiple = TRUE)
+  })
+
+  df_filt <- reactive({
+    d <- df_raw()
+    if ("MAF" %in% names(d)) d <- subset(d, is.na(MAF) | MAF >= input$mafMin)
+    d <- subset(d, P <= input$pCut & CHR %in% input$chrSel)
+    d
+  })
+
+  output$manhattan <- renderPlot({
+    d <- df_raw()
+    # optional MAF filter for plotting all points lightly
+    if ("MAF" %in% names(d)) d <- subset(d, is.na(MAF) | MAF >= input$mafMin)
+    d <- subset(d, CHR %in% input$chrSel)
+    validate(need(nrow(d) > 0, "No data to plot."))
+
+    # build cumulative bp for Manhattan
+    d$CHR <- as.factor(d$CHR)
+    chr_sizes <- aggregate(POS ~ CHR, d, max)
+    chr_sizes$cumstart <- c(0, cumsum(head(chr_sizes$POS, -1)))
+    d <- merge(d, chr_sizes[,c("CHR","cumstart")], by="CHR")
+    d$BPcum <- d$POS + d$cumstart
+
+    # x-axis labeling at chr centers
+    ax <- aggregate(BPcum ~ CHR, d, function(z) mean(range(z)))
+
+    ggplot(d, aes(BPcum, -log10(P), group = CHR)) +
+      geom_point(alpha = 0.6, size = 0.7) +
+      geom_hline(yintercept = -log10(input$pCut), linetype = 2) +
+      scale_x_continuous(breaks = ax$BPcum, labels = levels(d$CHR)) +
+      labs(x = "Chromosome", y = "-log10(p)") +
+      theme_bw(base_size = 12) +
+      theme(panel.grid.major.x = element_blank(),
+            panel.grid.minor.x = element_blank())
+  })
+
+  output$hits <- renderDT({
+    d <- df_filt()
+    keep <- intersect(c("CHR","POS","P","MAF","SNP"), names(d))
+    datatable(d[order(d$P), keep, drop=FALSE], options = list(pageLength = 10))
+  })
+
+  output$qqplot <- renderPlot({
+    d <- df_raw()
+    validate(need(nrow(d) > 0, "No data for QQ plot."))
+    p <- sort(pmax(pmin(d$P, 1), .Machine$double.eps))
+    n <- length(p)
+    exp <- -log10((1:n)/(n+1))
+    obs <- -log10(p)
+    ggplot(data.frame(exp, obs), aes(exp, obs)) +
+      geom_abline(slope = 1, intercept = 0, linetype = 2) +
+      geom_point(alpha = 0.6, size = 1) +
+      labs(x = "Expected -log10(p)", y = "Observed -log10(p)") +
+      theme_bw(base_size = 12)
+  })
+}
+
+shinyApp(ui, server)
