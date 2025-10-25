@@ -1,3 +1,7 @@
+
+find . -type f -name "*.fastq.gz"
+
+
 #(kmc3) [ jkitony@10.7.30.227:/data1/jkitony/Sorghum/GWAS_HPI/Genotyping/fastq ]$
 #python make_dummy_reads.py --reads-per-sample 50000 --outdir dummy_reads --seed 42
 
